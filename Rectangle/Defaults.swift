@@ -10,6 +10,7 @@ class Defaults {
     static let subsequentExecutionMode = SubsequentExecutionDefault()
     static let selectedCycleSizes = CycleSizesDefault()
     static let cycleSizesIsChanged = BoolDefault(key: "cycleSizesIsChanged")
+    static let cornerCycleExpansionAxis = IntEnumDefault<CornerCycleExpansionAxis>(key: "cornerCycleExpansionAxis", defaultValue: .horizontal)
     static let allowAnyShortcut = BoolDefault(key: "allowAnyShortcut")
     static let windowSnapping = OptionalBoolDefault(key: "windowSnapping")
     static let almostMaximizeHeight = FloatDefault(key: "almostMaximizeHeight")
@@ -22,7 +23,7 @@ class Defaults {
     static let snapEdgeMarginRight = FloatDefault(key: "snapEdgeMarginRight", defaultValue: 5)
     static let centeredDirectionalMove = OptionalBoolDefault(key: "centeredDirectionalMove")
     static let resizeOnDirectionalMove = BoolDefault(key: "resizeOnDirectionalMove")
-    static let moveFixedSizeToEdge = OptionalBoolDefault(key: "moveFixedSizeToEdge")
+    static let moveFixedSizeToEdge = IntEnumDefault<EdgeAlignment>(key: "moveFixedSizeToEdge", defaultValue: .centered)
     static let ignoredSnapAreas = IntDefault(key: "ignoredSnapAreas")
     static let traverseSingleScreen = OptionalBoolDefault(key: "traverseSingleScreen")
     static let useCursorScreenDetection = BoolDefault(key: "useCursorScreenDetection")
@@ -108,6 +109,7 @@ class Defaults {
         subsequentExecutionMode,
         selectedCycleSizes,
         cycleSizesIsChanged,
+        cornerCycleExpansionAxis,
         allowAnyShortcut,
         windowSnapping,
         almostMaximizeHeight,
