@@ -7,6 +7,13 @@ class LeftRightHalfCalculation: WindowCalculation, RepeatedExecutionsInThirdsCal
     override func calculate(_ params: WindowCalculationParameters) -> WindowCalculationResult? {
         
         let usableScreens = params.usableScreens
+
+        if Defaults.halvesPreserveOtherAxisSize.enabled, let tiledRect = HalvesPreserveOtherAxisSize.rect(for: params.asRectParams()) {
+            return WindowCalculationResult(rect: tiledRect.rect,
+                                           screen: usableScreens.currentScreen,
+                                           resultingAction: tiledRect.resultingAction ?? params.action,
+                                           resultingSubAction: tiledRect.subAction)
+        }
         
         switch Defaults.subsequentExecutionMode.value {
             
@@ -28,7 +35,7 @@ class LeftRightHalfCalculation: WindowCalculation, RepeatedExecutionsInThirdsCal
     }
     
     func calculateFirstRect(_ params: RectCalculationParameters) -> RectResult {
-        let ratio = Defaults.horizontalSplitRatio.value / 100.0
+        let ratio = ActiveSideSplitRatios.shared.horizontalRatio(for: params.visibleFrameOfScreen)
         let side: HalfSplitSide = params.action == .rightHalf ? .trailing : .leading
         let fraction = side == .trailing ? 1.0 - ratio : ratio
         return RectResult(HalfSplitFrameCalculation.horizontalRect(in: params.visibleFrameOfScreen, side: side, fraction: fraction))
@@ -39,9 +46,13 @@ class LeftRightHalfCalculation: WindowCalculation, RepeatedExecutionsInThirdsCal
         return RectResult(HalfSplitFrameCalculation.horizontalRect(in: params.visibleFrameOfScreen, side: side, fraction: fraction))
     }
 
+    func calculateRepeatedRect(_ params: RectCalculationParameters) -> RectResult {
+        calculateRepeatedSideRect(params)
+    }
+
     func calculateResize(_ params: WindowCalculationParameters) -> WindowCalculationResult? {
         let screen = params.usableScreens.currentScreen
-        let rectResult: RectResult = calculateRepeatedRect(params.asRectParams())
+        let rectResult: RectResult = calculateRepeatedSideRect(params.asRectParams())
         return WindowCalculationResult(rect: rectResult.rect, screen: screen, resultingAction: params.action)
     }
     

@@ -25,7 +25,9 @@ class SpecificDisplayCalculation: WindowCalculation {
             if let lastAction = params.lastAction,
                let calculation = WindowCalculationFactory.calculationsByAction[lastAction.action] {
 
-                AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: params.window.id)
+                if let windowId = params.window.id {
+                    AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+                }
 
                 let newCalculationParams = RectCalculationParameters(
                     window: rectParams.window,
@@ -35,6 +37,17 @@ class SpecificDisplayCalculation: WindowCalculation {
                 let rectResult = calculation.calculateRect(newCalculationParams)
 
                 return WindowCalculationResult(rect: rectResult.rect, screen: targetScreen, resultingAction: lastAction.action)
+            } else {
+                // Issue #1723: opt-in ON but no replayable lastAction (e.g. a manually positioned
+                // window). Map the window proportionally from the source screen to the destination
+                // screen so it keeps its relative spot instead of jumping to the center. Parity with
+                // NextPrevDisplayCalculation: display 1/2/3 moves behave like next/prev moves.
+                let sourceFrame = params.usableScreens.currentScreen.adjustedVisibleFrame(params.ignoreTodo)
+                let mappedRect = NextPrevDisplayCalculation.relativePositionedRect(
+                    window: rectParams.window.rect,
+                    source: sourceFrame,
+                    destination: rectParams.visibleFrameOfScreen)
+                return WindowCalculationResult(rect: mappedRect, screen: targetScreen, resultingAction: params.action)
             }
         }
 

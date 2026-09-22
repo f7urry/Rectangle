@@ -1,7 +1,6 @@
 /// SettingsViewController.swift
 
 import Cocoa
-import ServiceManagement
 import Sparkle
 import MASShortcut
 
@@ -42,23 +41,22 @@ class SettingsViewController: NSViewController {
     private var aboutTodoWindowController: NSWindowController?
     private var extraSettingsPopover: NSPopover?
     private let shortcutRecordingObserver = ShortcutRecordingObserver()
+    private var tilingShortcutViews = [MASShortcutView]()
+    private var tileGridLimitRows = [TileGridLimitRow]()
     
     private var cycleSizeCheckboxes = [NSButton]()
     private var cornerCycleExpansionAxisButtons = [NSButton]()
+    private var cooperativeCornerResizeCheckbox: NSButton?
+    private var stackBadgeCheckbox: NSButton?
     private var combinedDisplayModeCheckbox: NSButton?
     private var greenButtonOverrideCheckbox: NSButton?
+    private var autoMaximizeCheckbox: NSButton?
+    private var halvesPreserveOtherAxisSizeCheckbox: NSButton?
+    private var repeatedMaximizeRestoresPreviousCheckbox: NSButton?
     
     @IBAction func toggleLaunchOnLogin(_ sender: NSButton) {
         let newSetting: Bool = sender.state == .on
-        if #available(macOS 13, *) {
-            LaunchOnLogin.isEnabled = newSetting
-        } else {
-            let smLoginSuccess = SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, newSetting)
-            if !smLoginSuccess {
-                Logger.log("Unable to set launch at login preference. Attempting one more time.")
-                SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, newSetting)
-            }
-        }
+        LaunchOnLogin.isEnabled = newSetting
         Defaults.launchOnLogin.enabled = newSetting
     }
     
@@ -89,6 +87,7 @@ class SettingsViewController: NSViewController {
             if event.type == .leftMouseUp || event.type == .keyDown {
                 if Float(sender.intValue) != Defaults.gapSize.value {
                     Defaults.gapSize.value = Float(sender.intValue)
+                    skipGapTopEdgeCheckbox.isHidden = Defaults.gapSize.value == 0
                 }
             }
         }
@@ -108,12 +107,19 @@ class SettingsViewController: NSViewController {
         let newSetting: Bool = sender.state == .on
         Defaults.allowAnyShortcut.enabled = newSetting
         Notification.Name.allowAnyShortcut.post(object: newSetting)
+        let validator = newSetting ? PassthroughShortcutValidator() : MASShortcutValidator()
+        tilingShortcutViews.forEach { $0.shortcutValidator = validator }
     }
     
     @objc func toggleShowAdditionalSizesInMenu(_ sender: NSButton) {
         let enabled: Bool = sender.state == .on
         Defaults.showAdditionalSizesInMenu.enabled = enabled
         Notification.Name.showAdditionalSizesInMenuChanged.post()
+    }
+
+    @objc func toggleStackBadge(_ sender: NSButton) {
+        Defaults.stackBadge.enabled = sender.state == .on
+        Notification.Name.stackBadgeChanged.post()
     }
 
     @objc func toggleCyclingOverlapOffset(_ sender: NSButton) {
@@ -129,6 +135,10 @@ class SettingsViewController: NSViewController {
         Defaults.cornerCycleExpansionAxis.value = axis
         setToggleStatesForCornerCycleExpansionAxisButtons()
     }
+
+    @objc func toggleCooperativeCornerResize(_ sender: NSButton) {
+        Defaults.cooperativeCornerResize.enabled = sender.state == .on
+    }
     
     @IBAction func checkForUpdates(_ sender: Any) {
         AppDelegate.instance.updaterController?.checkForUpdates(sender)
@@ -140,10 +150,8 @@ class SettingsViewController: NSViewController {
             
             var openSystemSettingsButtonName = NSLocalizedString("iWV-c2-BJD.title", tableName: "Main", value: "Open System Preferences", comment: "")
             
-            if #available(macOS 13, *) {
-                openSystemSettingsButtonName = NSLocalizedString(
-                    "Open System Settings", tableName: "Main", value: "", comment: "")
-            }
+            openSystemSettingsButtonName = NSLocalizedString(
+                "Open System Settings", tableName: "Main", value: "", comment: "")
 
             let conflictTitleText = NSLocalizedString(
                 "Conflict with system setting", tableName: "Main", value: "", comment: "")
@@ -169,6 +177,18 @@ class SettingsViewController: NSViewController {
     @objc func toggleGreenButtonOverride(_ sender: NSButton) {
         Defaults.greenButtonOverride.enabled = sender.state == .on
         Notification.Name.greenButtonOverride.post()
+    }
+
+    @objc func toggleAutoMaximize(_ sender: NSButton) {
+        Defaults.autoMaximize.enabled = sender.state == .on
+    }
+
+    @objc func toggleHalvesPreserveOtherAxisSize(_ sender: NSButton) {
+        Defaults.halvesPreserveOtherAxisSize.enabled = sender.state == .on
+    }
+
+    @objc func toggleRepeatedMaximizeRestoresPrevious(_ sender: NSButton) {
+        Defaults.repeatedMaximizeRestoresPrevious.enabled = sender.state == .on
     }
 
     @IBAction func toggleTodoMode(_ sender: NSButton) {
@@ -237,12 +257,10 @@ class SettingsViewController: NSViewController {
         if response == .alertThirdButtonReturn { return }
 
         //  Restore default shortcuts
-        WindowAction.active.forEach { UserDefaults.standard.removeObject(forKey: $0.name) }
         let rectangleDefaults = response == .alertFirstButtonReturn
-        if rectangleDefaults != Defaults.alternateDefaultShortcuts.enabled {
-            Defaults.alternateDefaultShortcuts.enabled = rectangleDefaults
-            Notification.Name.changeDefaults.post()
-        }
+        WindowAction.active.forEach { UserDefaults.standard.removeObject(forKey: $0.name) }
+        Defaults.alternateDefaultShortcuts.enabled = rectangleDefaults
+        Notification.Name.changeDefaults.post()
         
         // Restore snap areas
         Defaults.portraitSnapAreas.typedValue = nil
@@ -253,7 +271,7 @@ class SettingsViewController: NSViewController {
     @IBAction func exportConfig(_ sender: NSButton) {
         Notification.Name.windowSnapping.post(object: false)
         let savePanel = NSSavePanel()
-        savePanel.allowedFileTypes = ["json"]
+        savePanel.allowedContentTypes = [.json]
         savePanel.nameFieldStringValue = "RectangleConfig"
         let response = savePanel.runModal()
         if response == .OK, let url = savePanel.url {
@@ -272,7 +290,7 @@ class SettingsViewController: NSViewController {
     @IBAction func importConfig(_ sender: NSButton) {
         Notification.Name.windowSnapping.post(object: false)
         let openPanel = NSOpenPanel()
-        openPanel.allowedFileTypes = ["json"]
+        openPanel.allowedContentTypes = [.json]
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
             Defaults.load(fileUrl: url)
@@ -296,6 +314,17 @@ class SettingsViewController: NSViewController {
             headerLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
             headerLabel.alignment = .center
             headerLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            let tileRowsLabel = NSTextField(labelWithString: NSLocalizedString("tileRows.title", tableName: "Main", value: "Tile Windows in Rows", comment: ""))
+            tileRowsLabel.alignment = .right
+            tileRowsLabel.translatesAutoresizingMaskIntoConstraints = false
+            let tileColumnsLabel = NSTextField(labelWithString: NSLocalizedString("tileColumns.title", tableName: "Main", value: "Tile Windows in Columns", comment: ""))
+            tileColumnsLabel.alignment = .right
+            tileColumnsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            let tileRowsShortcutView = MASShortcutView(frame: NSRect(x: 0, y: 0, width: 160, height: 19))
+            let tileColumnsShortcutView = MASShortcutView(frame: NSRect(x: 0, y: 0, width: 160, height: 19))
+            tilingShortcutViews = [tileRowsShortcutView, tileColumnsShortcutView]
 
             let largerWidthLabel = NSTextField(labelWithString: NSLocalizedString("Larger Width", tableName: "Main", value: "", comment: ""))
             largerWidthLabel.alignment = .right
@@ -441,6 +470,9 @@ class SettingsViewController: NSViewController {
                 vSplitPopUpButton?.selectCurrentValue()
             }
 
+            tileRowsShortcutView.setAssociatedUserDefaultsKey(WindowAction.tileRows.name, withTransformerName: MASDictionaryTransformerName)
+            tileColumnsShortcutView.setAssociatedUserDefaultsKey(WindowAction.tileColumns.name, withTransformerName: MASDictionaryTransformerName)
+
             largerWidthShortcutView.setAssociatedUserDefaultsKey(WindowAction.largerWidth.name, withTransformerName: MASDictionaryTransformerName)
             smallerWidthShortcutView.setAssociatedUserDefaultsKey(WindowAction.smallerWidth.name, withTransformerName: MASDictionaryTransformerName)
             
@@ -461,6 +493,8 @@ class SettingsViewController: NSViewController {
 
             if Defaults.allowAnyShortcut.enabled {
                 let passThroughValidator = PassthroughShortcutValidator()
+                tileRowsShortcutView.shortcutValidator = passThroughValidator
+                tileColumnsShortcutView.shortcutValidator = passThroughValidator
                 largerWidthShortcutView.shortcutValidator = passThroughValidator
                 smallerWidthShortcutView.shortcutValidator = passThroughValidator
                 topVerticalThirdShortcutView.shortcutValidator = passThroughValidator
@@ -477,6 +511,14 @@ class SettingsViewController: NSViewController {
                 bottomCenterRightEighthShortcutView.shortcutValidator = passThroughValidator
                 bottomRightEighthShortcutView.shortcutValidator = passThroughValidator
             }
+
+            let tileRowsIcon = NSImageView(frame: NSRect(x: 0, y: 0, width: 21, height: 14))
+            tileRowsIcon.image = WindowAction.tileRows.image
+            tileRowsIcon.image?.size = NSSize(width: 21, height: 14)
+
+            let tileColumnsIcon = NSImageView(frame: NSRect(x: 0, y: 0, width: 21, height: 14))
+            tileColumnsIcon.image = WindowAction.tileColumns.image
+            tileColumnsIcon.image?.size = NSSize(width: 21, height: 14)
 
             let largerWidthIcon = NSImageView(frame: NSRect(x: 0, y: 0, width: 21, height: 14))
             largerWidthIcon.image = WindowAction.largerWidth.image
@@ -537,6 +579,20 @@ class SettingsViewController: NSViewController {
             let bottomRightEighthIcon = NSImageView(frame: NSRect(x: 0, y: 0, width: 21, height: 14))
             bottomRightEighthIcon.image = WindowAction.bottomRightEighth.image
             bottomRightEighthIcon.image?.size = NSSize(width: 21, height: 14)
+
+            let tileRowsLabelStack = NSStackView()
+            tileRowsLabelStack.orientation = .horizontal
+            tileRowsLabelStack.alignment = .centerY
+            tileRowsLabelStack.spacing = 8
+            tileRowsLabelStack.addArrangedSubview(tileRowsLabel)
+            tileRowsLabelStack.addArrangedSubview(tileRowsIcon)
+
+            let tileColumnsLabelStack = NSStackView()
+            tileColumnsLabelStack.orientation = .horizontal
+            tileColumnsLabelStack.alignment = .centerY
+            tileColumnsLabelStack.spacing = 8
+            tileColumnsLabelStack.addArrangedSubview(tileColumnsLabel)
+            tileColumnsLabelStack.addArrangedSubview(tileColumnsIcon)
 
             let largerWidthLabelStack = NSStackView()
             largerWidthLabelStack.orientation = .horizontal
@@ -642,6 +698,20 @@ class SettingsViewController: NSViewController {
             bottomRightEighthLabelStack.spacing = 8
             bottomRightEighthLabelStack.addArrangedSubview(bottomRightEighthLabel)
             bottomRightEighthLabelStack.addArrangedSubview(bottomRightEighthIcon)
+
+            let tileRowsRow = NSStackView()
+            tileRowsRow.orientation = .horizontal
+            tileRowsRow.alignment = .centerY
+            tileRowsRow.spacing = 18
+            tileRowsRow.addArrangedSubview(tileRowsLabelStack)
+            tileRowsRow.addArrangedSubview(tileRowsShortcutView)
+
+            let tileColumnsRow = NSStackView()
+            tileColumnsRow.orientation = .horizontal
+            tileColumnsRow.alignment = .centerY
+            tileColumnsRow.spacing = 18
+            tileColumnsRow.addArrangedSubview(tileColumnsLabelStack)
+            tileColumnsRow.addArrangedSubview(tileColumnsShortcutView)
 
             let largerWidthRow = NSStackView()
             largerWidthRow.orientation = .horizontal
@@ -783,6 +853,27 @@ class SettingsViewController: NSViewController {
 
             mainStackView.addArrangedSubview(headerLabel)
             mainStackView.setCustomSpacing(10, after: headerLabel)
+            mainStackView.addArrangedSubview(tileRowsRow)
+            mainStackView.addArrangedSubview(tileColumnsRow)
+            mainStackView.setCustomSpacing(10, after: tileColumnsRow)
+
+            let tileGridHeaderLabel = NSTextField(labelWithString: NSLocalizedString("Tile Windows in Rows/Columns", tableName: "Main", value: "", comment: "General settings group for multi-window grid limits"))
+            tileGridHeaderLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+            tileGridHeaderLabel.alignment = .center
+            tileGridHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            let columnsLimitRow = TileGridLimitRow(
+                title: NSLocalizedString("Maximum windows per column", tableName: "Main", value: "", comment: "Maximum windows stacked in each tiled column"),
+                defaults: Defaults.tileColumnsMaxWindows)
+            let rowsLimitRow = TileGridLimitRow(
+                title: NSLocalizedString("Maximum windows per row", tableName: "Main", value: "", comment: "Maximum windows placed side by side in each tiled row"),
+                defaults: Defaults.tileRowsMaxWindows)
+            tileGridLimitRows = [columnsLimitRow, rowsLimitRow]
+            mainStackView.addArrangedSubview(tileGridHeaderLabel)
+            mainStackView.addArrangedSubview(columnsLimitRow)
+            mainStackView.addArrangedSubview(rowsLimitRow)
+            mainStackView.setCustomSpacing(10, after: rowsLimitRow)
+
             mainStackView.addArrangedSubview(largerWidthRow)
             mainStackView.addArrangedSubview(smallerWidthRow)
             mainStackView.addArrangedSubview(widthStepRow)
@@ -791,6 +882,7 @@ class SettingsViewController: NSViewController {
             mainStackView.addArrangedSubview(bottomVerticalThirdRow)
             mainStackView.addArrangedSubview(topVerticalTwoThirdsRow)
             mainStackView.addArrangedSubview(bottomVerticalTwoThirdsRow)
+            mainStackView.setCustomSpacing(10, after: bottomVerticalTwoThirdsRow)
             // Grid Positions - cycling shortcuts for larger grids
             let showAdditionalSizesCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Show additional sizes in menu", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleShowAdditionalSizesInMenu(_:)))
             showAdditionalSizesCheckbox.state = Defaults.showAdditionalSizesInMenu.userEnabled ? .on : .off
@@ -798,7 +890,6 @@ class SettingsViewController: NSViewController {
             showAdditionalSizesCheckbox.alignment = .left
             showAdditionalSizesCheckbox.imageHugsTitle = true
 
-            //
             let gridHeaderLabel = NSTextField(labelWithString: NSLocalizedString("Grid Positions", tableName: "Main", value: "", comment: ""))
             gridHeaderLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
             gridHeaderLabel.alignment = .center
@@ -871,6 +962,8 @@ class SettingsViewController: NSViewController {
                 sixteenthsCyclingShortcutView.shortcutValidator = passThroughValidator
             }
             shortcutRecordingObserver.observe([
+                tileRowsShortcutView,
+                tileColumnsShortcutView,
                 largerWidthShortcutView,
                 smallerWidthShortcutView,
                 topVerticalThirdShortcutView,
@@ -891,16 +984,34 @@ class SettingsViewController: NSViewController {
                 sixteenthsCyclingShortcutView
             ])
 
-            let overlapOffsetCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Offset cycling position on overlap", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleCyclingOverlapOffset(_:)))
+            let overlapOffsetCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Offset window position on overlap", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleCyclingOverlapOffset(_:)))
             overlapOffsetCheckbox.state = Defaults.cyclingOverlapOffset.userEnabled ? .on : .off
             overlapOffsetCheckbox.translatesAutoresizingMaskIntoConstraints = false
             overlapOffsetCheckbox.alignment = .left
 
+            let stackBadgeCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Show stacked window list on hover", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleStackBadge(_:)))
+            self.stackBadgeCheckbox = stackBadgeCheckbox
+            stackBadgeCheckbox.state = Defaults.stackBadge.userEnabled ? .on : .off
+            stackBadgeCheckbox.translatesAutoresizingMaskIntoConstraints = false
+            stackBadgeCheckbox.alignment = .left
+
+            let stackBadgeToggleLabel = NSTextField(labelWithString: NSLocalizedString("Toggle window list", tableName: "Main", value: "", comment: ""))
+            stackBadgeToggleLabel.alignment = .right
+            stackBadgeToggleLabel.translatesAutoresizingMaskIntoConstraints = false
+            let stackBadgeToggleShortcutView = MASShortcutView(frame: NSRect(x: 0, y: 0, width: 160, height: 19))
+            stackBadgeToggleShortcutView.setAssociatedUserDefaultsKey(StackBadgeManager.toggleDefaultsKey, withTransformerName: MASDictionaryTransformerName)
+            stackBadgeToggleShortcutView.translatesAutoresizingMaskIntoConstraints = false
+            stackBadgeToggleShortcutView.shortcutValidator = AppShortcutValidator(defaultsKey: StackBadgeManager.toggleDefaultsKey)
+            shortcutRecordingObserver.observe([stackBadgeToggleShortcutView])
+            let stackBadgeToggleRow = NSStackView()
+            stackBadgeToggleRow.orientation = .horizontal
+            stackBadgeToggleRow.alignment = .centerY
+            stackBadgeToggleRow.spacing = 18
+            stackBadgeToggleRow.addArrangedSubview(stackBadgeToggleLabel)
+            stackBadgeToggleRow.addArrangedSubview(stackBadgeToggleShortcutView)
+
             mainStackView.addArrangedSubview(gridHeaderLabel)
             mainStackView.setCustomSpacing(4, after: gridHeaderLabel)
-            mainStackView.addArrangedSubview(showAdditionalSizesCheckbox)
-            mainStackView.addArrangedSubview(overlapOffsetCheckbox)
-            mainStackView.setCustomSpacing(8, after: overlapOffsetCheckbox)
             mainStackView.addArrangedSubview(cyclingHintLabel)
             mainStackView.setCustomSpacing(8, after: cyclingHintLabel)
             mainStackView.addArrangedSubview(topLeftEighthRow)
@@ -914,6 +1025,12 @@ class SettingsViewController: NSViewController {
             mainStackView.addArrangedSubview(ninthsCyclingRow)
             mainStackView.addArrangedSubview(twelfthsCyclingRow)
             mainStackView.addArrangedSubview(sixteenthsCyclingRow)
+            mainStackView.addArrangedSubview(showAdditionalSizesCheckbox)
+            mainStackView.addArrangedSubview(overlapOffsetCheckbox)
+            mainStackView.addArrangedSubview(stackBadgeCheckbox)
+            mainStackView.setCustomSpacing(6, after: stackBadgeCheckbox)
+            mainStackView.addArrangedSubview(stackBadgeToggleRow)
+            mainStackView.setCustomSpacing(8, after: stackBadgeToggleRow)
 
 
             mainStackView.addArrangedSubview(splitRatioHeaderLabel)
@@ -921,9 +1038,33 @@ class SettingsViewController: NSViewController {
             mainStackView.addArrangedSubview(hSplitRow)
             mainStackView.addArrangedSubview(vSplitRow)
 
+            let halvesCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Half actions preserve the window's size on the other axis", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleHalvesPreserveOtherAxisSize(_:)))
+            halvesCheckbox.state = Defaults.halvesPreserveOtherAxisSize.enabled ? .on : .off
+            halvesCheckbox.toolTip = NSLocalizedString("Left Half then Top Half moves the window to the top left quarter; the action for the opposite edge expands it back.", tableName: "Main", value: "", comment: "")
+            halvesCheckbox.translatesAutoresizingMaskIntoConstraints = false
+            halvesCheckbox.alignment = .left
+
+            mainStackView.setCustomSpacing(8, after: vSplitRow)
+            mainStackView.addArrangedSubview(halvesCheckbox)
+            halvesPreserveOtherAxisSizeCheckbox = halvesCheckbox
+
+            let repeatedMaximizeCheckbox = NSButton(checkboxWithTitle: NSLocalizedString("Repeated Maximize restores the previous size and position", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleRepeatedMaximizeRestoresPrevious(_:)))
+            repeatedMaximizeCheckbox.state = Defaults.repeatedMaximizeRestoresPrevious.enabled ? .on : .off
+            repeatedMaximizeCheckbox.toolTip = NSLocalizedString("After Rectangle maximizes or almost maximizes a window, executing the same action again moves the window back to its previous size and position.", tableName: "Main", value: "", comment: "")
+            repeatedMaximizeCheckbox.translatesAutoresizingMaskIntoConstraints = false
+            repeatedMaximizeCheckbox.alignment = .left
+
+            mainStackView.addArrangedSubview(repeatedMaximizeCheckbox)
+            repeatedMaximizeRestoresPreviousCheckbox = repeatedMaximizeCheckbox
+
             NSLayoutConstraint.activate([
                 headerLabel.widthAnchor.constraint(equalTo: mainStackView.widthAnchor),
+                tileGridHeaderLabel.widthAnchor.constraint(equalTo: mainStackView.widthAnchor),
+                columnsLimitRow.widthAnchor.constraint(equalTo: mainStackView.widthAnchor),
+                rowsLimitRow.widthAnchor.constraint(equalTo: mainStackView.widthAnchor),
                 splitRatioHeaderLabel.widthAnchor.constraint(equalTo: mainStackView.widthAnchor),
+                tileRowsLabel.widthAnchor.constraint(equalTo: tileColumnsLabel.widthAnchor),
+                tileColumnsLabel.widthAnchor.constraint(equalTo: largerWidthLabel.widthAnchor),
                 largerWidthLabel.widthAnchor.constraint(equalTo: smallerWidthLabel.widthAnchor),
                 smallerWidthLabel.widthAnchor.constraint(equalTo: widthStepLabel.widthAnchor),
                 widthStepLabel.widthAnchor.constraint(equalTo: topVerticalThirdLabel.widthAnchor),
@@ -943,8 +1084,12 @@ class SettingsViewController: NSViewController {
                 ninthsCyclingLabel.widthAnchor.constraint(equalTo: twelfthsCyclingLabel.widthAnchor),
                 twelfthsCyclingLabel.widthAnchor.constraint(equalTo: sixteenthsCyclingLabel.widthAnchor),
                 sixteenthsCyclingLabel.widthAnchor.constraint(equalTo: hSplitLabel.widthAnchor),
+                stackBadgeToggleShortcutView.leadingAnchor.constraint(equalTo: sixteenthsCyclingShortcutView.leadingAnchor),
+                stackBadgeToggleShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 hSplitLabel.widthAnchor.constraint(equalTo: vSplitLabel.widthAnchor),
                 largerWidthLabelStack.widthAnchor.constraint(equalTo: smallerWidthLabelStack.widthAnchor),
+                tileRowsShortcutView.widthAnchor.constraint(equalToConstant: 160),
+                tileColumnsShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 largerWidthShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 smallerWidthShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 widthStepField.widthAnchor.constraint(equalToConstant: 160),
@@ -971,8 +1116,11 @@ class SettingsViewController: NSViewController {
                 twelfthsCyclingShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 sixteenthsCyclingShortcutView.widthAnchor.constraint(equalToConstant: 160),
                 widthStepField.trailingAnchor.constraint(equalTo: largerWidthShortcutView.trailingAnchor),
+                tileRowsShortcutView.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
+                tileColumnsShortcutView.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
                 showAdditionalSizesCheckbox.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
                 overlapOffsetCheckbox.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
+                stackBadgeCheckbox.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
                 smallerWidthShortcutView.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
                 topVerticalThirdShortcutView.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
                 middleVerticalThirdShortcutView.leadingAnchor.constraint(equalTo: largerWidthShortcutView.leadingAnchor),
@@ -1010,11 +1158,16 @@ class SettingsViewController: NSViewController {
             popover.contentViewController = viewController
             extraSettingsPopover = popover
         }
+        tileGridLimitRows.forEach { $0.reload() }
         extraSettingsPopover?.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
     
     override func awakeFromNib() {
         initializeToggles()
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(stackBadgeChanged),
+                                               name: .stackBadgeChanged,
+                                               object: nil)
 
         checkForUpdatesAutomaticallyCheckbox.bind(.value, to: AppDelegate.instance.updaterController.updater, withKeyPath: "automaticallyChecksForUpdates", options: nil)
         
@@ -1037,17 +1190,26 @@ class SettingsViewController: NSViewController {
         self.cycleSizeCheckboxes = cycleSizeCheckboxes
 
         let cornerCycleExpansionAxisRow = makeCornerCycleExpansionAxisRow()
+        let cooperativeCornerResizeCheckbox = makeCooperativeCornerResizeCheckbox()
+        self.cooperativeCornerResizeCheckbox = cooperativeCornerResizeCheckbox
         cycleSizesView.orientation = .vertical
         cycleSizesView.alignment = .leading
         cycleSizesView.spacing = 8
         cycleSizesView.addArrangedSubview(makeCycleSizesRow(cycleSizeCheckboxes))
         cycleSizesView.addArrangedSubview(cornerCycleExpansionAxisRow)
         
+        // Holding off on showing the cooperative resize feature for now
+        if Defaults.cooperativeCornerResize.enabled {
+            cycleSizesView.addArrangedSubview(cooperativeCornerResizeCheckbox)
+        }
+        
         initializeCycleSizesView(animated: false)
 
         initializeCombinedDisplayCheckbox()
 
         initializeGreenButtonOverrideCheckbox()
+
+        initializeAutoMaximizeCheckbox()
 
         Notification.Name.configImported.onPost(using: {_ in
             self.initializeTodoModeSettings()
@@ -1099,6 +1261,7 @@ class SettingsViewController: NSViewController {
         hideMenuBarIconCheckbox.state = Defaults.hideMenuBarIcon.enabled ? .on : .off
         
         subsequentExecutionPopUpButton.selectItem(withTag: Defaults.subsequentExecutionMode.value.rawValue)
+        tileGridLimitRows.forEach { $0.reload() }
         
         allowAnyShortcutCheckbox.state = Defaults.allowAnyShortcut.enabled ? .on : .off
                 
@@ -1106,6 +1269,7 @@ class SettingsViewController: NSViewController {
         gapLabel.stringValue = "\(gapSlider.intValue) px"
         gapSlider.isContinuous = true
         skipGapTopEdgeCheckbox.state = Defaults.skipGapTopEdge.enabled ? .on : .off
+        skipGapTopEdgeCheckbox.isHidden = Defaults.gapSize.value == 0
         
         cursorAcrossCheckbox.state = Defaults.moveCursorAcrossDisplays.userEnabled ? .on : .off
 
@@ -1118,6 +1282,11 @@ class SettingsViewController: NSViewController {
 
         greenButtonOverrideCheckbox?.state = Defaults.greenButtonOverride.enabled ? .on : .off
 
+        autoMaximizeCheckbox?.state = Defaults.autoMaximize.userDisabled ? .off : .on
+
+        halvesPreserveOtherAxisSizeCheckbox?.state = Defaults.halvesPreserveOtherAxisSize.enabled ? .on : .off
+        repeatedMaximizeRestoresPreviousCheckbox?.state = Defaults.repeatedMaximizeRestoresPrevious.enabled ? .on : .off
+
         if StageUtil.stageCapable {
             stageSlider.intValue = Int32(Defaults.stageSize.value)
             stageSlider.isContinuous = true
@@ -1127,6 +1296,7 @@ class SettingsViewController: NSViewController {
         }
         setToggleStatesForCycleSizeCheckboxes()
         setToggleStatesForCornerCycleExpansionAxisButtons()
+        setToggleStateForCooperativeCornerResizeCheckbox()
     }
     
     private func initializeCycleSizesView(animated: Bool = false) {
@@ -1135,6 +1305,7 @@ class SettingsViewController: NSViewController {
         if showOptionsView {
             setToggleStatesForCycleSizeCheckboxes()
             setToggleStatesForCornerCycleExpansionAxisButtons()
+            setToggleStateForCooperativeCornerResizeCheckbox()
         }
         
         setVisibility(shown: showOptionsView, ofView: cycleSizesView, withConstraint: cycleSizesViewHeightConstraint, animated: animated)
@@ -1199,6 +1370,21 @@ class SettingsViewController: NSViewController {
             parentStack.insertArrangedSubview(checkbox, at: insertIdx + 1)
             parentStack.insertArrangedSubview(descLabel, at: insertIdx + 2)
             greenButtonOverrideCheckbox = checkbox
+        }
+    }
+
+    private func initializeAutoMaximizeCheckbox() {
+        if autoMaximizeCheckbox == nil,
+           let parentStack = doubleClickTitleBarCheckbox.superview as? NSStackView,
+           let insertIdx = parentStack.arrangedSubviews.firstIndex(of: doubleClickTitleBarCheckbox) {
+
+            let checkbox = NSButton(checkboxWithTitle: NSLocalizedString("Preserve maximize state when moving across displays", tableName: "Main", value: "", comment: ""), target: self, action: #selector(toggleAutoMaximize(_:)))
+            checkbox.state = Defaults.autoMaximize.userDisabled ? .off : .on
+            checkbox.setContentCompressionResistancePriority(.required, for: .vertical)
+            checkbox.setContentHuggingPriority(.defaultHigh, for: .vertical)
+
+            parentStack.insertArrangedSubview(checkbox, at: insertIdx + 1)
+            autoMaximizeCheckbox = checkbox
         }
     }
 
@@ -1280,6 +1466,15 @@ class SettingsViewController: NSViewController {
         button.setContentCompressionResistancePriority(.required, for: .vertical)
         return button
     }
+
+    private func makeCooperativeCornerResizeCheckbox() -> NSButton {
+        let button = NSButton(checkboxWithTitle: NSLocalizedString("Resize adjacent windows when cycling side or corner shortcuts", tableName: "Main", value: "", comment: ""),
+                              target: self,
+                              action: #selector(toggleCooperativeCornerResize(_:)))
+        button.refusesFirstResponder = true
+        button.setContentCompressionResistancePriority(.required, for: .vertical)
+        return button
+    }
     
     private func configureHalfSplitRatioPopUpButton(_ popUpButton: HalfSplitRatioPopUpButton) {
         popUpButton.removeAllItems()
@@ -1312,6 +1507,7 @@ class SettingsViewController: NSViewController {
         }
         
         defaults.value = cycleSize.percentValue
+        ActiveSideSplitRatios.shared.resetAll()
         popUpButton.customField?.stringValue = "\(Int(round(cycleSize.percentValue)))"
         popUpButton.customField?.isHidden = true
     }
@@ -1364,6 +1560,14 @@ class SettingsViewController: NSViewController {
         }
     }
 
+    private func setToggleStateForCooperativeCornerResizeCheckbox() {
+        cooperativeCornerResizeCheckbox?.state = Defaults.cooperativeCornerResize.enabled ? .on : .off
+    }
+
+    @objc private func stackBadgeChanged() {
+        stackBadgeCheckbox?.state = Defaults.stackBadge.userEnabled ? .on : .off
+    }
+
 }
 
 extension SettingsViewController {
@@ -1384,6 +1588,7 @@ extension SettingsViewController: NSTextFieldDelegate {
 
         Debounce<Float>.input(sender.floatValue, comparedAgainst: sender.floatValue) { floatValue in
             defaults.value = floatValue
+            self.resetActiveSideSplitRatiosIfNeeded(for: defaults)
             sender.defaultsSetAction?()
         }
     }
@@ -1396,8 +1601,91 @@ extension SettingsViewController: NSTextFieldDelegate {
             let fallback = sender.fallbackValue
             sender.stringValue = "\(Int(fallback))"
             defaults.value = fallback
+            resetActiveSideSplitRatiosIfNeeded(for: defaults)
             sender.defaultsSetAction?()
         }
+    }
+
+    private func resetActiveSideSplitRatiosIfNeeded(for defaults: FloatDefault) {
+        guard defaults.key == Defaults.horizontalSplitRatio.key
+            || defaults.key == Defaults.verticalSplitRatio.key
+        else {
+            return
+        }
+
+        ActiveSideSplitRatios.shared.resetAll()
+    }
+}
+
+private class TileGridLimitRow: NSStackView, NSTextFieldDelegate {
+    private let defaults: PositiveIntDefault
+    private let field = NSTextField()
+    private let stepper = NSStepper()
+
+    init(title: String, defaults: PositiveIntDefault) {
+        self.defaults = defaults
+        super.init(frame: .zero)
+        orientation = .horizontal
+        alignment = .centerY
+        spacing = 8
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: title)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let formatter = NumberFormatter()
+        formatter.allowsFloats = false
+        formatter.minimum = 1
+        formatter.maximum = NSNumber(value: Int.max)
+        field.formatter = formatter
+        field.delegate = self
+        field.alignment = .right
+        field.refusesFirstResponder = false
+        field.setAccessibilityLabel(title)
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        stepper.minValue = 1
+        stepper.maxValue = Double(Int.max)
+        stepper.increment = 1
+        stepper.valueWraps = false
+        stepper.target = self
+        stepper.action = #selector(stepLimit(_:))
+        stepper.setAccessibilityLabel(title)
+
+        let controls: [NSControl] = [label, field, stepper]
+        controls.forEach { control in
+            control.setContentCompressionResistancePriority(.required, for: .vertical)
+            control.setContentHuggingPriority(.defaultHigh, for: .vertical)
+            addArrangedSubview(control)
+        }
+        reload()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("TileGridLimitRow is created programmatically")
+    }
+
+    func reload() {
+        field.stringValue = String(defaults.value)
+        stepper.doubleValue = Double(defaults.value)
+    }
+
+    @objc private func stepLimit(_ sender: NSStepper) {
+        defaults.value = Int(exactly: sender.doubleValue) ?? Int.max
+        reload()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        if let value = Int(field.stringValue), value > 0 {
+            defaults.value = value
+            stepper.doubleValue = Double(defaults.value)
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        reload()
     }
 }
 

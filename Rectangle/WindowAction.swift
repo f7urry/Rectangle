@@ -135,7 +135,9 @@ enum WindowAction: Int, Codable {
          displaySix = 125,
          displaySeven = 126,
          displayEight = 127,
-         displayNine = 128
+         displayNine = 128,
+         tileRows = 129,
+         tileColumns = 130
 
     // Order matters here - it's used in the menu
     static let active = [leftHalf, rightHalf, centerHalf, topHalf, bottomHalf,
@@ -164,7 +166,7 @@ enum WindowAction: Int, Codable {
                          bottomLeftSixteenth, bottomCenterLeftSixteenth, bottomCenterRightSixteenth, bottomRightSixteenth,
                          doubleHeightUp, doubleHeightDown, doubleWidthLeft, doubleWidthRight,
                          halveHeightUp, halveHeightDown, halveWidthLeft, halveWidthRight,
-                         tileAll, cascadeAll,
+                         tileAll, tileRows, tileColumns, cascadeAll,
                          leftTodo, rightTodo,
                          cascadeActiveApp, tileActiveApp,
                          displayOne, displayTwo, displayThree, displayFour, displayFive,
@@ -194,7 +196,7 @@ enum WindowAction: Int, Codable {
     // Determines where separators should be used in the menu
     var firstInGroup: Bool {
         switch self {
-        case .leftHalf, .topLeft, .firstThird, .maximize, .almostMaximize, .nextDisplay, .moveLeft, .firstFourth, .topLeftSixth, .topLeftEighth, .topLeftNinth, .topLeftTwelfth, .topLeftSixteenth:
+        case .leftHalf, .topLeft, .firstThird, .maximize, .almostMaximize, .nextDisplay, .moveLeft, .firstFourth, .topLeftSixth, .topLeftEighth, .topLeftNinth, .topLeftTwelfth, .topLeftSixteenth, .tileRows:
             return true
         default:
             return false
@@ -276,6 +278,8 @@ enum WindowAction: Int, Codable {
         case .halveWidthLeft: return "halveWidthLeft"
         case .halveWidthRight: return "halveWidthRight"
         case .tileAll: return "tileAll"
+        case .tileRows: return "tileRows"
+        case .tileColumns: return "tileColumns"
         case .cascadeAll: return "cascadeAll"
         case .leftTodo: return "leftTodo"
         case .rightTodo: return "rightTodo"
@@ -364,10 +368,10 @@ enum WindowAction: Int, Codable {
         switch self {
         case .leftHalf:
             key = "Xc8-Sm-pig.title"
-            value = "Left Side"
+            value = "Left"
         case .rightHalf:
             key = "F8S-GI-LiB.title"
-            value = "Right Side"
+            value = "Right"
         case .maximize:
             key = "8oe-J2-oUU.title"
             value = "Maximize"
@@ -388,13 +392,13 @@ enum WindowAction: Int, Codable {
             value = "Smaller"
         case .bottomHalf:
             key = "ec4-FB-fMa.title"
-            value = "Bottom Side"
+            value = "Bottom"
         case .topHalf:
             key = "d7y-s8-7GE.title"
-            value = "Top Side"
+            value = "Top"
         case .center:
             key = "8Bg-SZ-hDO.title"
-            value = "Center"
+            value = "Move to Center"
         case .bottomLeft:
             key = "6ma-hP-5xX.title"
             value = "Bottom Left"
@@ -445,7 +449,7 @@ enum WindowAction: Int, Codable {
             value = "Almost Maximize"
         case .centerHalf:
             key = "bRX-dV-iAR.title"
-            value = "Center Section"
+            value = "Center"
         case .firstFourth:
             key = "Q6Q-6J-okH.title"
             value = "First Fourth"
@@ -540,6 +544,12 @@ enum WindowAction: Int, Codable {
             value = "Bottom Right Eighth"
         case .doubleHeightUp, .doubleHeightDown, .doubleWidthLeft, .doubleWidthRight, .halveHeightUp, .halveHeightDown, .halveWidthLeft, .halveWidthRight:
             return nil
+        case .tileRows:
+            key = "tileRows.title"
+            value = "Tile Windows in Rows"
+        case .tileColumns:
+            key = "tileColumns.title"
+            value = "Tile Windows in Columns"
         case .specified, .reverseAll, .tileAll, .cascadeAll, .leftTodo, .rightTodo, .cascadeActiveApp, .tileActiveApp:
             return nil
         case .centerProminently, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight:
@@ -663,7 +673,7 @@ enum WindowAction: Int, Codable {
     
     var isDragSnappable: Bool {
         switch self {
-        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
+        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
             // Ninths
             .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
             // Corner thirds
@@ -807,6 +817,8 @@ enum WindowAction: Int, Codable {
         case .halveWidthRight: return  NSImage()
         case .specified, .reverseAll: return NSImage()
         case .tileAll: return NSImage()
+        case .tileRows: return NSImage(imageLiteralResourceName: "tileRowsTemplate")
+        case .tileColumns: return NSImage(imageLiteralResourceName: "tileColumnsTemplate")
         case .cascadeAll: return NSImage()
         case .leftTodo: return NSImage()
         case .rightTodo: return NSImage()
@@ -903,7 +915,7 @@ enum WindowAction: Int, Codable {
             return Defaults.applyGapsToMaximize.userDisabled ? .none : .both;
         case .maximizeHeight:
             return Defaults.applyGapsToMaximizeHeight.userDisabled ? .none : .vertical;
-        case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
+        case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
              .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine:
             return .none
@@ -922,13 +934,21 @@ enum WindowAction: Int, Codable {
              .moveLeft, .moveRight, .moveUp, .moveDown,
              .doubleHeightUp, .doubleHeightDown, .doubleWidthLeft, .doubleWidthRight,
              .halveHeightUp, .halveHeightDown, .halveWidthLeft, .halveWidthRight,
-             .reverseAll, .tileAll, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
+             .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
              .leftTodo, .rightTodo,
              .specified:
             return false
         default:
             return true
         }
+    }
+
+    /// Whether landing on another window in this position should be offset so
+    /// the covered window stays visible. Cycling positions qualify, and so
+    /// does maximize: it doesn't cycle, but two maximized windows still land
+    /// exactly on top of each other.
+    var overlapOffsetApplies: Bool {
+        positionCycles || self == .maximize
     }
 
     var category: WindowActionCategory? { // used to specify a submenu
@@ -940,6 +960,7 @@ enum WindowAction: Int, Codable {
         case .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth: return .ninths
         case .topLeftTwelfth, .topCenterLeftTwelfth, .topCenterRightTwelfth, .topRightTwelfth, .middleLeftTwelfth, .middleCenterLeftTwelfth, .middleCenterRightTwelfth, .middleRightTwelfth, .bottomLeftTwelfth, .bottomCenterLeftTwelfth, .bottomCenterRightTwelfth, .bottomRightTwelfth: return .twelfths
         case .topLeftSixteenth, .topCenterLeftSixteenth, .topCenterRightSixteenth, .topRightSixteenth, .upperMiddleLeftSixteenth, .upperMiddleCenterLeftSixteenth, .upperMiddleCenterRightSixteenth, .upperMiddleRightSixteenth, .lowerMiddleLeftSixteenth, .lowerMiddleCenterLeftSixteenth, .lowerMiddleCenterRightSixteenth, .lowerMiddleRightSixteenth, .bottomLeftSixteenth, .bottomCenterLeftSixteenth, .bottomCenterRightSixteenth, .bottomRightSixteenth: return .sixteenths
+        case .tileRows, .tileColumns: return .tiling
         case .moveUp, .moveDown, .moveLeft, .moveRight: return .move
         case .almostMaximize, .maximizeHeight, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight: return .size
         default: return nil

@@ -1,20 +1,88 @@
 /// ShortcutManager.swift
 
-import Foundation
+import Cocoa
+import CoreGraphics
 import MASShortcut
+
+protocol ShortcutBindingStore {
+    func configure()
+    func registerDefaultShortcuts(_ shortcuts: [String: MASShortcut])
+    func bindShortcut(withDefaultsKey defaultsKey: String, toAction action: @escaping () -> Void)
+    func breakBinding(withDefaultsKey defaultsKey: String)
+}
+
+struct MASShortcutBindingStore: ShortcutBindingStore {
+    func configure() {
+        MASShortcutBinder.shared()?.bindingOptions = [NSBindingOption.valueTransformerName: MASDictionaryTransformerName]
+    }
+
+    func registerDefaultShortcuts(_ shortcuts: [String: MASShortcut]) {
+        MASShortcutBinder.shared()?.registerDefaultShortcuts(shortcuts)
+    }
+
+    func bindShortcut(withDefaultsKey defaultsKey: String, toAction action: @escaping () -> Void) {
+        MASShortcutBinder.shared()?.bindShortcut(withDefaultsKey: defaultsKey, toAction: action)
+    }
+
+    func breakBinding(withDefaultsKey defaultsKey: String) {
+        MASShortcutBinder.shared()?.breakBinding(withDefaultsKey: defaultsKey)
+    }
+}
+
+typealias ShortcutRebindScheduler = (@escaping () -> Void) -> Void
 
 class ShortcutManager {
 
     let windowManager: WindowManager
+    private let screenDetection: ScreenDetection
+    private let bindingStore: ShortcutBindingStore
+    private let notificationCenter: NotificationCenter
+    private let workspaceNotificationCenter: NotificationCenter
+    private let shortcutsProvider: () -> [WindowAction: MASShortcut]
+    private let appDisabledProvider: () -> Bool
+    private let scheduler: ShortcutRebindScheduler
+    private let todoSessionStateChanged: (Bool) -> Void
     private var boundShortcutActions = Set<WindowAction>()
     private var shortcutIdentities = [WindowAction: ShortcutCycle.ShortcutIdentity]()
     private var isUpdatingShortcutBindings = false
     private var shortcutsSuspendedForRecording = false
+    private var sessionIsActive: Bool
+    private var sessionRebindPending = false
+    private var sessionGeneration = 0
 
-    init(windowManager: WindowManager) {
+    init(
+        windowManager: WindowManager,
+        screenDetection: ScreenDetection = ScreenDetection(),
+        bindingStore: ShortcutBindingStore = MASShortcutBindingStore(),
+        notificationCenter: NotificationCenter = .default,
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        shortcutsProvider: @escaping () -> [WindowAction: MASShortcut] = { ShortcutCycle.shortcutsByAction() },
+        activeStateProvider: () -> Bool = {
+            let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+            return session?[kCGSessionOnConsoleKey] as? Bool ?? true
+        },
+        appDisabledProvider: @escaping () -> Bool = { ApplicationToggle.shortcutsDisabled },
+        scheduler: @escaping ShortcutRebindScheduler = { action in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100), execute: action)
+        },
+        todoSessionStateChanged: @escaping (Bool) -> Void = { isActive in
+            TodoManager.setShortcutBindingsSessionActive(isActive)
+            StackBadgeManager.setShortcutBindingsSessionActive(isActive)
+        }
+    ) {
         self.windowManager = windowManager
+        self.screenDetection = screenDetection
+        self.bindingStore = bindingStore
+        self.notificationCenter = notificationCenter
+        self.workspaceNotificationCenter = workspaceNotificationCenter
+        self.shortcutsProvider = shortcutsProvider
+        self.appDisabledProvider = appDisabledProvider
+        self.scheduler = scheduler
+        self.todoSessionStateChanged = todoSessionStateChanged
+        self.sessionIsActive = activeStateProvider()
 
-        MASShortcutBinder.shared()?.bindingOptions = [NSBindingOption.valueTransformerName: MASDictionaryTransformerName]
+        bindingStore.configure()
+        todoSessionStateChanged(sessionIsActive)
 
         registerDefaults()
 
@@ -22,9 +90,11 @@ class ShortcutManager {
 
         subscribeAll(selector: #selector(windowActionTriggered))
 
-        NotificationCenter.default.addObserver(self, selector: #selector(defaultShortcutsChanged), name: .changeDefaults, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(userDefaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(shortcutRecordingChanged), name: .shortcutRecording, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(defaultShortcutsChanged), name: .changeDefaults, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(userDefaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(shortcutRecordingChanged), name: .shortcutRecording, object: nil)
+        workspaceNotificationCenter.addObserver(self, selector: #selector(sessionDidResignActive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        workspaceNotificationCenter.addObserver(self, selector: #selector(sessionDidBecomeActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
     }
 
     public func reloadFromDefaults() {
@@ -36,9 +106,13 @@ class ShortcutManager {
     }
 
     public func bindShortcuts() {
-        guard !shortcutsSuspendedForRecording else { return }
+        guard sessionIsActive,
+              !sessionRebindPending,
+              !shortcutsSuspendedForRecording,
+              !appDisabledProvider()
+        else { return }
 
-        let shortcutsByAction = ShortcutCycle.shortcutsByAction()
+        let shortcutsByAction = shortcutsProvider()
         let groups = ShortcutCycle.groups(shortcutsByAction: shortcutsByAction)
 
         shortcutIdentities = ShortcutCycle.shortcutIdentities(shortcutsByAction: shortcutsByAction)
@@ -48,11 +122,11 @@ class ShortcutManager {
             boundShortcutActions.insert(representativeAction)
 
             if group.isCycle {
-                MASShortcutBinder.shared()?.bindShortcut(withDefaultsKey: representativeAction.name, toAction: { [weak self] in
+                bindingStore.bindShortcut(withDefaultsKey: representativeAction.name, toAction: { [weak self] in
                     self?.executeCycle(group)
                 })
             } else {
-                MASShortcutBinder.shared()?.bindShortcut(withDefaultsKey: representativeAction.name, toAction: representativeAction.post)
+                bindingStore.bindShortcut(withDefaultsKey: representativeAction.name, toAction: representativeAction.post)
             }
         }
     }
@@ -62,7 +136,7 @@ class ShortcutManager {
         defer { isUpdatingShortcutBindings = false }
 
         for action in Set(WindowAction.active).union(boundShortcutActions) {
-            MASShortcutBinder.shared()?.breakBinding(withDefaultsKey: action.name)
+            bindingStore.breakBinding(withDefaultsKey: action.name)
         }
 
         boundShortcutActions.removeAll()
@@ -74,7 +148,8 @@ class ShortcutManager {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        notificationCenter.removeObserver(self)
+        workspaceNotificationCenter.removeObserver(self)
     }
 
     private func registerDefaults() {
@@ -88,7 +163,39 @@ class ShortcutManager {
             dict[windowAction.name] = shortcut
         }
 
-        MASShortcutBinder.shared()?.registerDefaultShortcuts(defaultShortcuts)
+        bindingStore.registerDefaultShortcuts(defaultShortcuts)
+    }
+
+    @objc private func sessionDidResignActive(_ notification: Notification) {
+        guard sessionIsActive else { return }
+
+        sessionIsActive = false
+        sessionRebindPending = false
+        sessionGeneration &+= 1
+        unbindShortcuts()
+        todoSessionStateChanged(false)
+    }
+
+    @objc private func sessionDidBecomeActive(_ notification: Notification) {
+        guard !sessionIsActive else { return }
+
+        sessionIsActive = true
+        sessionRebindPending = true
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
+
+        scheduler { [weak self] in
+            guard let self,
+                  self.sessionIsActive,
+                  self.sessionRebindPending,
+                  self.sessionGeneration == generation
+            else { return }
+
+            self.sessionRebindPending = false
+            self.unbindShortcuts()
+            self.bindShortcuts()
+            self.todoSessionStateChanged(true)
+        }
     }
 
     @objc func windowActionTriggered(notification: NSNotification) {
@@ -109,6 +216,7 @@ class ShortcutManager {
 
         // Check if repeat cycles displays
         if Defaults.subsequentExecutionMode.value == .cycleMonitor,
+           parameters.source != .titleBar,
            parameters.action.classification != .size,
            parameters.action.classification != .display {
             guard let windowElement = parameters.windowElement ?? AccessibilityElement.getFrontWindowElement(),
@@ -118,9 +226,10 @@ class ShortcutManager {
                 return
             }
 
-            if isRepeatAction(parameters: parameters, windowElement: windowElement, windowId: windowId) {
-                if let screen = ScreenDetection().detectScreens(using: windowElement)?.adjacentScreens?.next{
-                    parameters = ExecutionParameters(parameters.action, updateRestoreRect: parameters.updateRestoreRect, screen: screen, windowElement: windowElement, windowId: windowId)
+            if isRepeatAction(parameters: parameters, windowElement: windowElement, windowId: windowId),
+               RepeatedMaximizeRestore.restoreRect(for: parameters.action, windowId: windowId, windowRect: windowManager.logicalFrame(for: windowElement)) == nil {
+                if let screen = screenDetection.detectScreens(using: windowElement)?.adjacentScreens?.next{
+                    parameters = ExecutionParameters(parameters.action, updateRestoreRect: parameters.updateRestoreRect, screen: screen, windowElement: windowElement, windowId: windowId, source: parameters.source)
                     // Bypass any other subsequent action by removing the last action
                     AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
                 }
@@ -138,15 +247,16 @@ class ShortcutManager {
             return
         }
 
+        let logicalFrame = windowManager.logicalFrame(for: windowElement)
         let lastAction = AppDelegate.windowHistory.lastRectangleActions[windowId]
-        if ShortcutCycle.isStale(lastAction: lastAction, currentWindowRect: windowElement.frame) {
+        if ShortcutCycle.isStale(lastAction: lastAction, currentWindowRect: logicalFrame) {
             AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
         }
 
         let selectedAction = ShortcutCycle.action(
             in: group,
             lastAction: AppDelegate.windowHistory.lastRectangleActions[windowId],
-            currentWindowRect: windowElement.frame
+            currentWindowRect: logicalFrame
         )
         execute(ExecutionParameters(selectedAction, windowElement: windowElement, windowId: windowId))
     }
@@ -164,12 +274,12 @@ class ShortcutManager {
         guard !isUpdatingShortcutBindings && !shortcutsSuspendedForRecording else { return }
 
         MASShortcutMigration.syncRenamedSideShortcutAliases()
-        let currentShortcuts = ShortcutCycle.shortcutsByAction()
+        let currentShortcuts = shortcutsProvider()
         let currentIdentities = ShortcutCycle.shortcutIdentities(shortcutsByAction: currentShortcuts)
         guard currentIdentities != shortcutIdentities else { return }
 
         unbindShortcuts()
-        if !ApplicationToggle.shortcutsDisabled {
+        if !appDisabledProvider() {
             bindShortcuts()
         } else {
             shortcutIdentities = currentIdentities
@@ -186,19 +296,22 @@ class ShortcutManager {
         } else {
             guard shortcutsSuspendedForRecording else { return }
             shortcutsSuspendedForRecording = false
-            if !ApplicationToggle.shortcutsDisabled {
+            if !appDisabledProvider() {
                 bindShortcuts()
             } else {
-                let currentShortcuts = ShortcutCycle.shortcutsByAction()
+                let currentShortcuts = shortcutsProvider()
                 shortcutIdentities = ShortcutCycle.shortcutIdentities(shortcutsByAction: currentShortcuts)
             }
         }
+
+        TodoManager.setShortcutBindingsSuspended(isRecording)
+        StackBadgeManager.setShortcutBindingsSuspended(isRecording)
     }
 
     private func isRepeatAction(parameters: ExecutionParameters, windowElement: AccessibilityElement, windowId: CGWindowID) -> Bool {
 
         if parameters.action == .maximize {
-            if ScreenDetection().detectScreens(using: windowElement)?.currentScreen.visibleFrame.size == windowElement.frame.size {
+            if screenDetection.detectScreens(using: windowElement)?.currentScreen.visibleFrame.size == windowManager.logicalFrame(for: windowElement).size {
                 return true
             }
         }
@@ -209,12 +322,12 @@ class ShortcutManager {
     }
 
     private func subscribe(notification: WindowAction, selector: Selector) {
-        NotificationCenter.default.addObserver(self, selector: selector, name: notification.notificationName, object: nil)
+        notificationCenter.addObserver(self, selector: selector, name: notification.notificationName, object: nil)
     }
 
     private func unsubscribeWindowActions() {
         for windowAction in WindowAction.active {
-            NotificationCenter.default.removeObserver(self, name: windowAction.notificationName, object: nil)
+            notificationCenter.removeObserver(self, name: windowAction.notificationName, object: nil)
         }
     }
 

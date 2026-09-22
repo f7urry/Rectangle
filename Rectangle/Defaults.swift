@@ -4,13 +4,17 @@ import Cocoa
 
 class Defaults {
     static let launchOnLogin = BoolDefault(key: "launchOnLogin")
-    static let disabledApps = StringDefault(key: "disabledApps")
+    static let disabledApps = JSONDefault<Set<String>>(key: "disabledApps")
     static let hideMenuBarIcon = BoolDefault(key: "hideMenubarIcon")
     static let alternateDefaultShortcuts = BoolDefault(key: "alternateDefaultShortcuts") // switch to magnet defaults
     static let subsequentExecutionMode = SubsequentExecutionDefault()
+    static let tileColumnsMaxWindows = PositiveIntDefault(key: "tileColumnsMaxWindows", defaultValue: 3)
+    static let tileRowsMaxWindows = PositiveIntDefault(key: "tileRowsMaxWindows", defaultValue: 3)
     static let selectedCycleSizes = CycleSizesDefault()
     static let cycleSizesIsChanged = BoolDefault(key: "cycleSizesIsChanged")
     static let cornerCycleExpansionAxis = IntEnumDefault<CornerCycleExpansionAxis>(key: "cornerCycleExpansionAxis", defaultValue: .horizontal)
+    static let cooperativeCornerResize = BoolDefault(key: "cooperativeCornerResize")
+    static let experimentalWindowAnimations = BoolDefault(key: "experimentalWindowAnimations")
     static let allowAnyShortcut = BoolDefault(key: "allowAnyShortcut")
     static let windowSnapping = OptionalBoolDefault(key: "windowSnapping")
     static let almostMaximizeHeight = FloatDefault(key: "almostMaximizeHeight")
@@ -23,16 +27,20 @@ class Defaults {
     static let snapEdgeMarginRight = FloatDefault(key: "snapEdgeMarginRight", defaultValue: 5)
     static let centeredDirectionalMove = OptionalBoolDefault(key: "centeredDirectionalMove")
     static let resizeOnDirectionalMove = BoolDefault(key: "resizeOnDirectionalMove")
-    static let moveFixedSizeToEdge = IntEnumDefault<EdgeAlignment>(key: "moveFixedSizeToEdge", defaultValue: .centered)
+    static let halvesPreserveOtherAxisSize = BoolDefault(key: "halvesPreserveOtherAxisSize")
+    static let repeatedMaximizeRestoresPrevious = BoolDefault(key: "repeatedMaximizeRestoresPrevious")
+    static let moveFixedSizeToEdge = IntEnumDefault<EdgeAlignment>(key: "moveFixedSizeToEdge", defaultValue: .edgesAndCorners)
     static let ignoredSnapAreas = IntDefault(key: "ignoredSnapAreas")
     static let traverseSingleScreen = OptionalBoolDefault(key: "traverseSingleScreen")
     static let useCursorScreenDetection = BoolDefault(key: "useCursorScreenDetection")
-    static let minimumWindowWidth = FloatDefault(key: "minimumWindowWidth")
-    static let minimumWindowHeight = FloatDefault(key: "minimumWindowHeight")
+    static let minimumWindowWidth = DoubleDefault(key: "minimumWindowWidth", defaultValue: 0.25)
+    static let minimumWindowHeight = DoubleDefault(key: "minimumWindowHeight", defaultValue: 0.25)
     static let sizeOffset = FloatDefault(key: "sizeOffset")
     static let widthStepSize = FloatDefault(key: "widthStepSize", defaultValue: 30)
     static let unsnapRestore = OptionalBoolDefault(key: "unsnapRestore")
+    static let unsnapRestoreFromSizeChange = OptionalBoolDefault(key: "unsnapRestoreFromSizeChange")
     static let curtainChangeSize = OptionalBoolDefault(key: "curtainChangeSize")
+    static let smallerShrinksMaximizedHeight = BoolDefault(key: "smallerShrinksMaximizedHeight")
     static let relaunchOpensMenu = BoolDefault(key: "relaunchOpensMenu")
     static let obtainWindowOnClick = OptionalBoolDefault(key: "obtainWindowOnClick")
     static let screenEdgeGapTop = FloatDefault(key: "screenEdgeGapTop", defaultValue: 0)
@@ -46,10 +54,19 @@ class Defaults {
     static let showAllActionsInMenu = OptionalBoolDefault(key: "showAllActionsInMenu")
     static let showAdditionalSizesInMenu = OptionalBoolDefault(key: "showAdditionalSizesInMenu")
     static var SUHasLaunchedBefore: Bool { UserDefaults.standard.bool(forKey: "SUHasLaunchedBefore") }
-    static let footprintAlpha = FloatDefault(key: "footprintAlpha", defaultValue: 0.3)
+    static let footprintAlpha = DoubleDefault(key: "footprintAlpha")
+    static var effectiveFootprintAlpha: Double {
+        if UserDefaults.standard.object(forKey: footprintAlpha.key) == nil {
+            return footprintBlur.enabled ? 0 : 0.3
+        }
+        return footprintAlpha.value
+    }
     static let footprintBorderWidth = FloatDefault(key: "footprintBorderWidth", defaultValue: 2)
     static let footprintFade = OptionalBoolDefault(key: "footprintFade")
     static let footprintColor = JSONDefault<CodableColor>(key: "footprintColor")
+    static let footprintBlur = BoolDefault(key: "footprintBlur")
+    static let blurAppearance = IntEnumDefault<BlurAppearance>(key: "blurAppearance", defaultValue: .system)
+
     static let SUEnableAutomaticChecks = BoolDefault(key: "SUEnableAutomaticChecks")
     static let todo = OptionalBoolDefault(key: "todo")
     static let todoMode = BoolDefault(key: "todoMode")
@@ -64,6 +81,7 @@ class Defaults {
     static let cyclingOverlapOffset = OptionalBoolDefault(key: "cyclingOverlapOffset")
     static let cyclingOverlapOffsetSize = FloatDefault(key: "cyclingOverlapOffsetSize", defaultValue: 11)
     static let cyclingOverlapMaxCascade = IntDefault(key: "cyclingOverlapMaxCascade", defaultValue: 1)
+    static let stackBadge = OptionalBoolDefault(key: "stackBadge")
     static let fullIgnoreBundleIds = JSONDefault<[String]>(key: "fullIgnoreBundleIds")
     static let notifiedOfProblemApps = BoolDefault(key: "notifiedOfProblemApps")
     static let specifiedHeight = FloatDefault(key: "specifiedHeight", defaultValue: 1050)
@@ -85,7 +103,11 @@ class Defaults {
     static let landscapeSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "landscapeSnapAreas")
     static let portraitSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "portraitSnapAreas")
     static let missionControlDragging = OptionalBoolDefault(key: "missionControlDragging")
-    static let enhancedUI = IntEnumDefault<EnhancedUI>(key: "enhancedUI", defaultValue: .disableEnable)
+    static let enhancedUI = IntEnumDefault<EnhancedUI>(
+        key: "enhancedUI",
+        defaultValue: .automatic,
+        invalidValueFallback: .disableEnable
+    )
     static let footprintAnimationDurationMultiplier = FloatDefault(key: "footprintAnimationDurationMultiplier", defaultValue: 0)
     static let hapticFeedbackOnSnap = OptionalBoolDefault(key: "hapticFeedbackOnSnap")
     static let missionControlDraggingAllowedOffscreenDistance = FloatDefault(key: "missionControlDraggingAllowedOffscreenDistance", defaultValue: 25)
@@ -97,8 +119,9 @@ class Defaults {
     static let ignoreDragSnapToo = OptionalBoolDefault(key: "ignoreDragSnapToo")
     static let systemWideMouseDown = OptionalBoolDefault(key: "systemWideMouseDown")
     static let systemWideMouseDownApps = JSONDefault<Set<String>>(key:"systemWideMouseDownApps", defaultValue: Set<String>(["org.languagetool.desktop", "com.microsoft.teams2"]))
+    static let directAnimationNativeResizeApps = JSONDefault<Set<String>>(key: "directAnimationNativeResizeApps", defaultValue: Set<String>(["com.colliderli.iina"]))
     static let internalTilingNotified = BoolDefault(key: "internalTilingNotified")
-    static let screensOrderedByX = OptionalBoolDefault(key: "screensOrderedByX")
+    static let screensOrderedByX = IntEnumDefault<ScreenOrdering>(key: "screensOrderedByX", defaultValue: .yThenMinX)
     static let combinedDisplayMode = OptionalBoolDefault(key: "combinedDisplayMode")
     static let greenButtonOverride = BoolDefault(key: "greenButtonOverride")
     static var array: [Default] = [
@@ -107,9 +130,13 @@ class Defaults {
         hideMenuBarIcon,
         alternateDefaultShortcuts,
         subsequentExecutionMode,
+        tileColumnsMaxWindows,
+        tileRowsMaxWindows,
         selectedCycleSizes,
         cycleSizesIsChanged,
         cornerCycleExpansionAxis,
+        cooperativeCornerResize,
+        experimentalWindowAnimations,
         allowAnyShortcut,
         windowSnapping,
         almostMaximizeHeight,
@@ -122,6 +149,8 @@ class Defaults {
         snapEdgeMarginRight,
         centeredDirectionalMove,
         resizeOnDirectionalMove,
+        halvesPreserveOtherAxisSize,
+        repeatedMaximizeRestoresPrevious,
         ignoredSnapAreas,
         traverseSingleScreen,
         minimumWindowWidth,
@@ -130,6 +159,7 @@ class Defaults {
         widthStepSize,
         unsnapRestore,
         curtainChangeSize,
+        smallerShrinksMaximizedHeight,
         relaunchOpensMenu,
         obtainWindowOnClick,
         screenEdgeGapTop,
@@ -144,11 +174,14 @@ class Defaults {
         footprintBorderWidth,
         footprintFade,
         footprintColor,
+        footprintBlur,
+        blurAppearance,
         SUEnableAutomaticChecks,
         todo,
         todoMode,
         todoApplication,
         todoSidebarWidth,
+        todoSidebarWidthUnit,
         todoSidebarSide,
         snapModifiers,
         attemptMatchOnNextPrevDisplay,
@@ -186,11 +219,13 @@ class Defaults {
         ignoreDragSnapToo,
         systemWideMouseDown,
         systemWideMouseDownApps,
+        directAnimationNativeResizeApps,
         screensOrderedByX,
         showAdditionalSizesInMenu,
         cyclingOverlapOffset,
         cyclingOverlapOffsetSize,
         cyclingOverlapMaxCascade,
+        stackBadge,
         moveFixedSizeToEdge,
         greenButtonOverride
     ]
@@ -200,12 +235,14 @@ struct CodableDefault: Codable {
     let bool: Bool?
     let int: Int?
     let float: Float?
+    let double: Double?
     let string: String?
     
-    init(bool: Bool? = nil, int: Int? = nil, float: Float? = nil, string: String? = nil) {
+    init(bool: Bool? = nil, int: Int? = nil, float: Float? = nil, double: Double? = nil, string: String? = nil) {
         self.bool = bool
         self.int = int
         self.float = float
+        self.double = double
         self.string = string
     }
 }
@@ -357,6 +394,80 @@ class FloatDefault: Default {
     }
 }
 
+class DoubleDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    private let defaultValue: Double
+
+    var value: Double {
+        didSet {
+            if initialized {
+                UserDefaults.standard.set(value, forKey: key)
+            }
+        }
+    }
+
+    init(key: String, defaultValue: Double = 0) {
+        self.key = key
+        self.defaultValue = defaultValue
+        if UserDefaults.standard.object(forKey: key) == nil {
+            value = defaultValue
+        } else {
+            value = UserDefaults.standard.double(forKey: key)
+        }
+        initialized = true
+    }
+
+    func load(from codable: CodableDefault) {
+        if let double = codable.double {
+            value = double
+        } else if let float = codable.float {
+            // Legacy float-backed defaults could not distinguish an absent value
+            // from zero; preserve their effective default when migrating.
+            value = float == 0 && defaultValue != 0 ? defaultValue : Double(float)
+        }
+    }
+
+    func toCodable() -> CodableDefault {
+        CodableDefault(double: value)
+    }
+}
+
+class PositiveIntDefault: Default {
+    let key: String
+    private let userDefaults: UserDefaults
+    private var storedValue: Int
+
+    var value: Int {
+        get { storedValue }
+        set {
+            storedValue = max(1, newValue)
+            userDefaults.set(storedValue, forKey: key)
+        }
+    }
+
+    init(key: String, defaultValue: Int, userDefaults: UserDefaults = .standard) {
+        precondition(defaultValue > 0)
+        self.key = key
+        self.userDefaults = userDefaults
+        if let savedValue = userDefaults.object(forKey: key) {
+            storedValue = max(1, savedValue as? Int ?? 1)
+        } else {
+            storedValue = defaultValue
+        }
+    }
+
+    func load(from codable: CodableDefault) {
+        if let int = codable.int {
+            value = int
+        }
+    }
+
+    func toCodable() -> CodableDefault {
+        CodableDefault(int: value)
+    }
+}
+
 class IntDefault: Default {
     public private(set) var key: String
     private var initialized = false
@@ -408,10 +519,11 @@ class JSONDefault<T: Codable>: StringDefault {
     }
     
     init(key: String, defaultValue: T) {
+        super.init(key: key)
+        loadFromJSON()
         if typedValue == nil {
             typedValue = defaultValue
         }
-        super.init(key: key)
     }
     
     override func load(from codable: CodableDefault) {
@@ -432,7 +544,8 @@ class JSONDefault<T: Codable>: StringDefault {
     
     private func saveToJSON(_ obj: T?) {
         let encoder = JSONEncoder()
-        
+        encoder.outputFormatting = .sortedKeys
+
         if let jsonData = try? encoder.encode(obj) {
             let jsonString = String(data: jsonData, encoding: .utf8)
             if jsonString != value {
@@ -444,7 +557,7 @@ class JSONDefault<T: Codable>: StringDefault {
 
 class IntEnumDefault<E: RawRepresentable>: Default where E.RawValue == Int {
     public private(set) var key: String
-    private let defaultValue: E
+    private let invalidValueFallback: E
 
     var _value: E
     var value: E {
@@ -457,16 +570,21 @@ class IntEnumDefault<E: RawRepresentable>: Default where E.RawValue == Int {
         get { _value }
     }
 
-    init(key: String, defaultValue: E) {
+    init(key: String, defaultValue: E, invalidValueFallback: E? = nil) {
         self.key = key
-        self.defaultValue = defaultValue
-        let intValue = UserDefaults.standard.integer(forKey: key)
-        _value = E(rawValue: intValue) ?? defaultValue
+        let invalidValueFallback = invalidValueFallback ?? defaultValue
+        self.invalidValueFallback = invalidValueFallback
+        if UserDefaults.standard.object(forKey: key) == nil {
+            _value = defaultValue
+        } else {
+            let intValue = UserDefaults.standard.integer(forKey: key)
+            _value = E(rawValue: intValue) ?? invalidValueFallback
+        }
     }
 
     func load(from codable: CodableDefault) {
         if let intValue = codable.int, _value.rawValue != intValue {
-            _value = E(rawValue: intValue) ?? defaultValue
+            _value = E(rawValue: intValue) ?? invalidValueFallback
             UserDefaults.standard.set(_value.rawValue, forKey: key)
         }
     }
@@ -493,3 +611,18 @@ struct CodableColor : Codable {
         self.alpha = nsColor.alphaComponent
     }
 }
+
+enum BlurAppearance: Int, CaseIterable {
+    case system = 0
+    case light = 1
+    case dark = 2
+
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+

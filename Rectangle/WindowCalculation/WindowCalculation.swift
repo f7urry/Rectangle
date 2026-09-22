@@ -19,7 +19,7 @@ class WindowCalculation: Calculation {
             return nil
         }
         
-        return WindowCalculationResult(rect: rectResult.rect, screen: params.usableScreens.currentScreen, resultingAction: params.action, resultingSubAction: rectResult.subAction)
+        return WindowCalculationResult(rect: rectResult.rect, screen: params.usableScreens.currentScreen, resultingAction: rectResult.resultingAction ?? params.action, resultingSubAction: rectResult.subAction)
     }
 
     func calculateRect(_ params: RectCalculationParameters) -> RectResult {
@@ -47,7 +47,7 @@ class WindowCalculation: Calculation {
 }
 
 struct Window {
-    let id: CGWindowID
+    let id: CGWindowID?
     let rect: CGRect
 }
 
@@ -95,7 +95,7 @@ struct RectResult {
 
 struct WindowCalculationResult {
     var rect: CGRect
-    let initialRect: CGRect
+    var initialRect: CGRect
     let screen: NSScreen
     let resultingAction: WindowAction
     let resultingSubAction: SubWindowAction?

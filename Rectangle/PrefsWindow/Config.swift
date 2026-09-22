@@ -13,7 +13,7 @@ extension Defaults {
                 shortcuts[action.name] = Shortcut(masShortcut: masShortcut)
             }
         }
-        for defaultsKey in TodoManager.defaultsKeys {
+        for defaultsKey in TodoManager.defaultsKeys + StackBadgeManager.defaultsKeys {
             guard
                 let shortcutDict = UserDefaults.standard.dictionary(forKey: defaultsKey),
                 let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)),
@@ -28,6 +28,7 @@ extension Defaults {
         for exportableDefault in Defaults.array {
             codableDefaults[exportableDefault.key] = exportableDefault.toCodable()
         }
+        codableDefaults[footprintAlpha.key] = CodableDefault(double: effectiveFootprintAlpha)
                 
         let config = Config(bundleId: "com.knollsoft.Rectangle",
                             version: version,
@@ -35,10 +36,7 @@ extension Defaults {
                             defaults: codableDefaults)
         
         let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        if #available(macOS 10.13, *) {
-            encoder.outputFormatting.update(with: .sortedKeys)
-        }
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let encodedJson = try? encoder.encode(config) {
             if let jsonString = String(data: encodedJson, encoding: .utf8) {
                 return jsonString
@@ -53,7 +51,7 @@ extension Defaults {
         return try? decoder.decode(Config.self, from: jsonData)
     }
     
-    static func load(fileUrl: URL) {
+    static func load(fileUrl: URL, notificationCenter: NotificationCenter = .default) {
         guard let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)) else { return }
         
         // Size cap: legitimate configs are ~tens of KB; refuse anything that
@@ -74,19 +72,25 @@ extension Defaults {
         
         for action in WindowAction.active {
             let importedShortcut = config.shortcuts[action.name] ?? action.aliasName.flatMap { config.shortcuts[$0] }
-            if let shortcut = importedShortcut?.toMASSHortcut() {
+            if let importedShortcut, importedShortcut.keyCode >= 0 {
+                let shortcut = importedShortcut.toMASSHortcut()
                 let dictValue = dictTransformer.reverseTransformedValue(shortcut)
                 UserDefaults.standard.setValue(dictValue, forKey: action.name)
+            } else {
+                UserDefaults.standard.removeObject(forKey: action.name)
             }
         }
-        for defaultsKey in TodoManager.defaultsKeys {
-            if let shortcut = config.shortcuts[defaultsKey]?.toMASSHortcut() {
+        for defaultsKey in TodoManager.defaultsKeys + StackBadgeManager.defaultsKeys {
+            if let importedShortcut = config.shortcuts[defaultsKey], importedShortcut.keyCode >= 0 {
+                let shortcut = importedShortcut.toMASSHortcut()
                 let dictValue = dictTransformer.reverseTransformedValue(shortcut)
                 UserDefaults.standard.setValue(dictValue, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
             }
         }
         
-        Notification.Name.configImported.post()
+        Notification.Name.configImported.post(center: notificationCenter)
     }
     
     static func loadFromSupportDir() {

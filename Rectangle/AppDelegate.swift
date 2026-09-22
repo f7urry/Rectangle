@@ -2,10 +2,9 @@
 
 import Cocoa
 import Sparkle
-import ServiceManagement
 import os.log
 
-@NSApplicationMain
+@main
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     static let launcherAppId = "com.knollsoft.RectangleLauncher"
@@ -25,6 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var applicationToggle: ApplicationToggle!
     private var windowCalculationFactory: WindowCalculationFactory!
     private var snappingManager: SnappingManager!
+    private var stackBadgeManager: StackBadgeManager!
     private var titleBarManager: TitleBarManager!
     private var greenButtonManager: GreenButtonManager!
     
@@ -109,11 +109,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if intLastVersion < 64 {
                 SnapAreaModel.instance.migrate()
             }
-            if intLastVersion < 72 {
-                if #available(macOS 13, *) {
-                    SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, false)
-                }
-            }
         } else {
             Defaults.installVersion.value = currentVersion
             Defaults.allowAnyShortcut.enabled = true
@@ -153,6 +148,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.shortcutManager = ShortcutManager(windowManager: windowManager)
         self.applicationToggle = ApplicationToggle(shortcutManager: shortcutManager)
         self.snappingManager = SnappingManager()
+        self.stackBadgeManager = StackBadgeManager()
         self.titleBarManager = TitleBarManager()
         self.greenButtonManager = GreenButtonManager()
         self.initializeTodo()
@@ -291,31 +287,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkLaunchOnLogin() {
-        if #available(macOS 13.0, *) {
-            if Defaults.launchOnLogin.enabled, !LaunchOnLogin.isEnabled {
-                LaunchOnLogin.isEnabled = true
-            }
-        } else {
-            let running = NSWorkspace.shared.runningApplications
-            let isRunning = !running.filter({$0.bundleIdentifier == AppDelegate.launcherAppId}).isEmpty
-            if isRunning {
-                let killNotification = Notification.Name("killLauncher")
-                DistributedNotificationCenter.default().post(name: killNotification, object: Bundle.main.bundleIdentifier!)
-            }
-            if !Defaults.SUHasLaunchedBefore {
-                Defaults.launchOnLogin.enabled = true
-            }
-            
-            // Even if we are already set up to launch on login, setting it again since macOS can be buggy with this type of launch on login.
-            if Defaults.launchOnLogin.enabled {
-                let smLoginSuccess = SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, true)
-                if !smLoginSuccess {
-                    if #available(OSX 10.12, *) {
-                        os_log("Unable to enable launch at login. Attempting one more time.", type: .info)
-                    }
-                    SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, true)
-                }
-            }
+        if Defaults.launchOnLogin.enabled, !LaunchOnLogin.isEnabled {
+            LaunchOnLogin.isEnabled = true
         }
     }
     
@@ -394,18 +367,20 @@ extension AppDelegate: NSMenuDelegate {
         windowAction.postMenu()
     }
     
-    func addWindowActionMenuItems() {
-        let additionalSizeCategories: Set<WindowActionCategory> = [.eighths, .ninths, .twelfths, .sixteenths]
+    func addWindowActionMenuItems(showAdditional: Bool = Defaults.showAdditionalSizesInMenu.userEnabled,
+                                  showAllActions: Bool = Defaults.showAllActionsInMenu.userEnabled) {
+        let additionalSizeCategories: Set<WindowActionCategory> = [.eighths, .ninths, .twelfths, .sixteenths, .tiling]
         let submenuOnlyWhenAdditional: Set<WindowActionCategory> = [.thirds, .size]
-        let showAdditional = Defaults.showAdditionalSizesInMenu.userEnabled
         var menuIndex = 0
         var categoryMenus: [CategoryMenu] = []
         for action in WindowAction.active {
             guard let displayName = action.displayName else { continue }
             let newMenuItem = NSMenuItem(title: displayName, action: #selector(executeMenuWindowAction), keyEquivalent: "")
             newMenuItem.representedObject = action
-
-            if !Defaults.showAllActionsInMenu.userEnabled, let category = action.category {
+            if #available(macOS 27.0, *) {
+                newMenuItem.preferredImageVisibility = .visible
+            }
+            if !showAllActions, let category = action.category {
                 // When additional sizes are off, keep Thirds and Size as flat items
                 if submenuOnlyWhenAdditional.contains(category) && !showAdditional {
                     // Fall through to flat item handling below
@@ -439,7 +414,7 @@ extension AppDelegate: NSMenuDelegate {
                 categoryMenu.menu.delegate = self
                 let menuMenuItem = NSMenuItem(title: categoryMenu.category.displayName, action: nil, keyEquivalent: "")
                 if additionalSizeCategories.contains(categoryMenu.category) {
-                    menuMenuItem.isHidden = !Defaults.showAdditionalSizesInMenu.userEnabled
+                    menuMenuItem.isHidden = !showAdditional
                     additionalSizeMenuItems.append(menuMenuItem)
                 }
                 mainStatusMenu.insertItem(menuMenuItem, at: menuIndex)
